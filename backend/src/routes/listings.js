@@ -6,6 +6,7 @@ const admin = require('../config/firebaseAdmin');
 const { body, validationResult } = require('express-validator');
 
 
+
 // Add router-level logging
 router.use((req, res, next) => {
   console.log(`Listings router handling: ${req.method} ${req.url}`);
@@ -134,7 +135,7 @@ router.get('/fetchfavorites', async (req, res) => {
 //       .select(`
 //         listing_id,
 //         category_id,
-//         categories:categories(category_id, name)
+//         categories:categories(category_id  )
 //       `)
 //       .in('listing_id', listingIds);
 
@@ -663,80 +664,74 @@ router.post('/users/update', async (req, res) => {
   }
 });
 
-// Middleware to verify Firebase token
-const verifyToken = async (req, res, next) => {
-  const idToken = req.headers.authorization?.split('Bearer ')[1];
-  if (!idToken) return res.status(401).json({ error: 'Unauthorized' });
-  try {
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    req.user = decodedToken;
-    next();
-  } catch (err) {
-    res.status(401).json({ error: 'Invalid token' });
-  }
-};
 
-// Admin: Create a new coupon
-router.post('/coupons', verifyToken, [
-  body('code').isString().notEmpty().trim(),
-  body('description').isString().notEmpty().trim(),
-  body('discount_percentage').optional().isNumeric().toFloat(),
-  body('discount_amount').optional().isNumeric().toFloat(),
-  body('location').isString().notEmpty().trim(),
-  body('valid_from').isISO8601(),
-  body('valid_until').isISO8601(),
-], async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
 
-  const { code, description, discount_percentage, discount_amount, location, valid_from, valid_until } = req.body;
-  const firebase_uid = req.user.uid;
+// // Admin: Create a new coupon
+// router.post(
+//   "/coupons",
+//   verifyToken,
+//   [
+//     body("code").isString().notEmpty().trim(),
+//     body("description").isString().notEmpty().trim(),
+//     body("discount_percentage").optional().isNumeric().toFloat(),
+//     body("discount_amount").optional().isNumeric().toFloat(),
+//     body("location").isString().notEmpty().trim(),
+//     body("valid_from").isISO8601(),
+//     body("valid_until").isISO8601(),
+//   ],
+//   async (req, res) => {
+//     const errors = validationResult(req);
+//     if (!errors.isEmpty()) {
+//       return res.status(400).json({ errors: errors.array() });
+//     }
 
-  try {
-    // Check if user is admin
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('user_id, is_admin')
-      .eq('firebase_uid', firebase_uid)
-      .single();
+//     const { code, description, discount_percentage, discount_amount, location, valid_from, valid_until } = req.body;
+//     const firebase_uid = req.user.uid;
 
-    if (userError || !userData?.is_admin) {
-      return res.status(403).json({ error: 'Access denied: Admins only' });
-    }
+//     try {
+//       // Fetch user data
+//       const { data: userData, error: userError } = await supabase
+//         .from("users")
+//         .select("user_id")
+//         .eq("firebase_uid", firebase_uid)
+//         .single();
 
-    // Validate either percentage or amount is provided, not both
-    if ((discount_percentage && discount_amount) || (!discount_percentage && !discount_amount)) {
-      return res.status(400).json({ error: 'Provide either discount_percentage or discount_amount, not both' });
-    }
+//       if (userError) {
+//         return res.status(400).json({ error: "User not found" });
+//       }
 
-    // Insert coupon
-    const { data, error } = await supabase
-      .from('coupons')
-      .insert({
-        code,
-        description,
-        discount_percentage,
-        discount_amount,
-        location,
-        valid_from,
-        valid_until,
-        created_by: userData.user_id,
-      })
-      .select('coupon_id')
-      .single();
+//       // Validate either percentage or amount is provided, not both
+//       if ((discount_percentage && discount_amount) || (!discount_percentage && !discount_amount)) {
+//         return res.status(400).json({ error: "Provide either discount_percentage or discount_amount, not both" });
+//       }
 
-    if (error) {
-      return res.status(500).json({ error: 'Failed to create coupon', details: error.message });
-    }
+//       // Insert coupon into coupons table
+//       const { data, error } = await supabase
+//         .from("coupons")
+//         .insert({
+//           code,
+//           description,
+//           discount_percentage,
+//           discount_amount,
+//           location,
+//           valid_from,
+//           valid_until,
+//           created_by: userData.user_id,
+//         })
+//         .select("coupon_id")
+//         .single();
 
-    res.json({ message: 'Coupon created successfully', coupon_id: data.coupon_id });
-  } catch (err) {
-    console.error('Error creating coupon:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+//       if (error) {
+//         return res.status(500).json({ error: "Failed to create coupon", details: error.message });
+//       }
+
+//       res.json({ message: "Coupon created successfully", coupon_id: data.coupon_id });
+//     } catch (err) {
+//       console.error("Error creating coupon:", err);
+//       res.status(500).json({ error: "Internal server error" });
+//     }
+//   }
+// );
 
 // Fetch coupons with optional location search
 router.get('/coupons', async (req, res) => {
@@ -807,8 +802,59 @@ router.post('/users/insert', async (req, res) => {
 });
 
 
-
-
+const stateMap = {
+  'alabama': 'AL',
+  'alaska': 'AK',
+  'arizona': 'AZ',
+  'arkansas': 'AR',
+  'california': 'CA',
+  'colorado': 'CO',
+  'connecticut': 'CT',
+  'delaware': 'DE',
+  'florida': 'FL',
+  'georgia': 'GA',
+  'hawaii': 'HI',
+  'idaho': 'ID',
+  'illinois': 'IL',
+  'indiana': 'IN',
+  'iowa': 'IA',
+  'kansas': 'KS',
+  'kentucky': 'KY',
+  'louisiana': 'LA',
+  'maine': 'ME',
+  'maryland': 'MD',
+  'massachusetts': 'MA',
+  'michigan': 'MI',
+  'minnesota': 'MN',
+  'mississippi': 'MS',
+  'missouri': 'MO',
+  'montana': 'MT',
+  'nebraska': 'NE',
+  'nevada': 'NV',
+  'new hampshire': 'NH',
+  'new jersey': 'NJ',
+  'new mexico': 'NM',
+  'new york': 'NY',
+  'north carolina': 'NC',
+  'north dakota': 'ND',
+  'ohio': 'OH',
+  'oklahoma': 'OK',
+  'oregon': 'OR',
+  'pennsylvania': 'PA',
+  'rhode island': 'RI',
+  'south carolina': 'SC',
+  'south dakota': 'SD',
+  'tennessee': 'TN',
+  'texas': 'TX',
+  'utah': 'UT',
+  'vermont': 'VT',
+  'virginia': 'VA',
+  'washington': 'WA',
+  'west virginia': 'WV',
+  'wisconsin': 'WI',
+  'wyoming': 'WY'
+  }
+//*** */
 router.get('/search', async (req, res) => {
   logToFile('Received /listings/search request:', req.query);
   try {
@@ -857,10 +903,15 @@ router.get('/search', async (req, res) => {
 
     if (type) query = query.eq('type', type);
     if (location) {
-      const [city, state] = location.split(',').map((s) => s.trim());
-      if (city) query = query.ilike('city', `%${city}%`);
-      if (state) query = query.eq('state', state);
+       const searchTerm = location.toLowerCase();
+      const fullState = stateMap[searchTerm] || searchTerm;
+     
+      console.log('vxxvxvxvLocation search:', { searchTerm, fullState });
+      query = query.or(
+        `city.ilike.%${searchTerm}%,state.ilike.%${searchTerm}%,state.ilike.%${fullState}%`
+      );
     }
+
     if (date) {
       query = query.gte('created_at', date);
       query = query.lte('created_at', `${date}T23:59:59`);
@@ -1019,6 +1070,67 @@ router.get('/search', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+// router.get('/search', async (req, res) => {
+//   try {
+//     const { page = 1, limit = 10, type, category, location, date } = req.query;
+//     console.log('Search params:', { page, limit, type, category, location, date });
+
+//     let query = supabase
+//       .from('listings')
+//       .select(`
+//         listing_id,
+//         title,
+//         description,
+//         city,
+//         state,
+//         type,
+//         event_details,
+//         temple_details,
+//         vendor_details,
+//         activity_details,
+//         media,
+//         categories (name)
+//       `, { count: 'exact' });
+
+//     // Apply filters
+//     if (type) {
+//       query = query.eq('type', type);
+//     }
+//     if (category) {
+//       query = query.filter('categories.name', 'eq', category);
+//     }
+//     if (date && type === 'event') {
+//       query = query.gte('event_details.start_date_time', date);
+//     }
+//     if (location) {
+//       const searchTerm = location.toLowerCase();
+//       const fullState = stateMap[searchTerm] || searchTerm;
+//       console.log('Location search:', { searchTerm, fullState });
+//       query = query.or(
+//         `city.ilike.%${searchTerm}%,state.ilike.%${searchTerm}%,state.ilike.%${fullState}%`
+//       );
+//     }
+
+//     // Pagination
+//     const from = (page - 1) * limit;
+//     const to = from + parseInt(limit) - 1;
+//     query = query.range(from, to);
+
+//     const { data, count, error } = await query;
+
+//     if (error) {
+//       console.error('Supabase error:', error);
+//       return res.status(500).json({ error: 'Failed to fetch listings.' });
+//     }
+
+//     console.log('Fetched listings:', { count: data.length, total: count });
+//     res.json(data || []);
+//   } catch (err) {
+//     console.error('Unexpected error:', err);
+//     res.status(500).json({ error: 'Internal server error' });
+//   }
+// });
+
 router.post('/categories', async (req, res) => {
   const { name, type } = req.body;
   try {

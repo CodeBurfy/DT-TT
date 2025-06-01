@@ -1,27 +1,30 @@
+// src/HomePage.jsx
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { auth, googleProvider } from '../firebaseConfig';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 
 const HomePage = () => {
   const [listings, setListings] = useState([]);
   const [categories, setCategories] = useState([]);
   const [coupons, setCoupons] = useState([]);
-  const [couponSearchLocation, setCouponSearchLocation] = useState('');
   const [couponError, setCouponError] = useState(null);
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useState({
+    search: '',
     type: '',
     category: '',
-    location: '',
     date: '',
   });
   const [loading, setLoading] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
   const [error, setError] = useState(null);
   const [authError, setAuthError] = useState(null);
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [hasPendingCoupons, setHasPendingCoupons] = useState(false);
   const [showSignOutMenu, setShowSignOutMenu] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
@@ -43,16 +46,38 @@ const HomePage = () => {
     }
     try {
       const idToken = await user.getIdToken();
-      const response = await axios.get(`${import.meta.env.VITE_API_URL}/api/listings/users/check`, {
+      const response = await axios.get(`${import.meta.env.VITE_API_URL}/api/users/profile`, {
         headers: { Authorization: `Bearer ${idToken}` },
       });
-      setIsAdmin(response.data.user?.is_admin || false);
-      if (!response.data.profileComplete) {
+      const { is_admin, profile_complete } = response.data;
+      console.log('User profile:', { is_admin, profile_complete });
+      setIsAdmin(is_admin || false);
+      if (!profile_complete) {
         navigate('/user-onboarding');
       }
     } catch (err) {
       console.error('Error checking profile status:', err);
-      setError(err.response?.data?.error || 'Failed to check profile status.');
+      setError('Failed to check profile status.');
+      setIsAdmin(false);
+    }
+  };
+
+  const checkPendingCoupons = async () => {
+    if (!user) {
+      console.log('No user authenticated, skipping pending coupons check.');
+      setHasPendingCoupons(false);
+      return;
+    }
+    try {
+      const idToken = await user.getIdToken();
+      const response = await axios.get(`${import.meta.env.VITE_API_URL}/api/coupons/has-pending`, {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      console.log('Pending coupons response:', response.data);
+      setHasPendingCoupons(response.data.hasPending || false);
+    } catch (err) {
+      console.error('Error checking pending coupons:', err);
+      setHasPendingCoupons(false);
     }
   };
 
@@ -64,8 +89,7 @@ const HomePage = () => {
     }
     try {
       const token = await currentUser.getIdToken();
-      const apiUrl = `${import.meta.env.VITE_API_URL}/api/listings/fetchfavorites`;
-      const response = await axios.get(apiUrl, {
+      const response = await axios.get(`${import.meta.env.VITE_API_URL}/api/listings/fetchfavorites`, {
         params: { user_id: currentUser.uid },
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -115,77 +139,19 @@ const HomePage = () => {
     }
   };
 
-  const fetchCoupons = async (location = '') => {
+  const fetchCoupons = async (search = '') => {
     try {
-      const params = location ? { location } : {};
-      const response = await axios.get(`${import.meta.env.VITE_API_URL}/api/listings/coupons`, { params });
+      const params = search ? { location: search } : {};
+      console.log('Fetching coupons with params:', params);
+      const response = await axios.get(`${import.meta.env.VITE_API_URL}/api/coupons/approved`, {
+        params,
+      });
+      console.log('Fetched approved coupons:', response.data);
       setCoupons(Array.isArray(response.data) ? response.data : []);
     } catch (err) {
       console.error('Error fetching coupons:', err);
-      setCouponError(err.response?.data?.error || 'Failed to load coupons.');
+      setCouponError('Failed to load coupons.');
       setCoupons([]);
-    }
-  };
-
-  useEffect(() => {
-    fetchCoupons();
-  }, []);
-
-  const handleCouponSearch = (e) => {
-    e.preventDefault();
-    fetchCoupons(couponSearchLocation);
-  };
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        await checkProfileStatus();
-        await fetchFavorites(currentUser);
-      } else {
-        setIsAdmin(false);
-        setFavorites([]);
-        localStorage.removeItem('favorites');
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const handleGoogleLogin = async () => {
-    setAuthError(null);
-    try {
-      const result = await signInWithPopup(auth, googleProvider);
-      if (result.user) {
-        setUser(result.user);
-        const idToken = await result.user.getIdToken();
-        await axios.post(
-          `${import.meta.env.VITE_API_URL}/api/listings/users/insert`,
-          {
-            firebase_uid: result.user.uid,
-            email: result.user.email,
-          },
-          {
-            headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-          }
-        );
-        await checkProfileStatus();
-        await fetchFavorites(result.user);
-      }
-    } catch (err) {
-      setAuthError(err.message);
-    }
-  };
-
-  const handleSignOut = async () => {
-    try {
-      await signOut(auth);
-      setShowSignOutMenu(false);
-      setUser(null);
-      setIsAdmin(false);
-      setFavorites([]);
-      localStorage.removeItem('favorites');
-    } catch (err) {
-      setAuthError(err.message);
     }
   };
 
@@ -208,16 +174,28 @@ const HomePage = () => {
         limit,
         type: searchParams.type || undefined,
         category: searchParams.category || undefined,
-        location: searchParams.location || undefined,
+        location: searchParams.search || undefined,
         date: searchParams.date || undefined,
       };
-      const response = await axios.get(`${import.meta.env.VITE_API_URL}/api/listings/search`, { params });
+      console.log('Fetching listings with params:', params);
+      const response = await axios.get(`${import.meta.env.VITE_API_URL}/api/listings/search`, {
+        params,
+      });
+      console.log('Listings response:', {
+        status: response.status,
+        data: response.data,
+        count: Array.isArray(response.data) ? response.data.length : 0,
+      });
       const newListings = Array.isArray(response.data) ? response.data : [];
       setListings((prev) => (append ? [...prev, ...newListings] : newListings));
       setHasMore(newListings.length === limit);
     } catch (err) {
-      console.error('Error fetching listings:', err);
-      setError('Failed to load listings.');
+      console.error('Error fetching listings:', {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status,
+      });
+      setError('Failed to load listings. Please try again.');
       if (!append) setListings([]);
     } finally {
       setLoading(false);
@@ -225,14 +203,28 @@ const HomePage = () => {
   };
 
   useEffect(() => {
-    fetchCategories();
+    fetchCoupons();
     fetchListings(1, false);
+    fetchCategories();
   }, []);
 
   const handleSearch = (e) => {
     e.preventDefault();
     setPage(1);
     fetchListings(1, false);
+    fetchCoupons(searchParams.search);
+  };
+
+  const handleClearSearch = () => {
+    setSearchParams({
+      search: '',
+      type: '',
+      category: '',
+      date: '',
+    });
+    setPage(1);
+    fetchListings(1, false);
+    fetchCoupons();
   };
 
   const handleInputChange = (e) => {
@@ -246,12 +238,99 @@ const HomePage = () => {
     fetchListings(nextPage, true);
   };
 
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      console.log('Auth state changed:', currentUser?.uid);
+      setUser(currentUser);
+      setAuthLoading(false);
+      if (currentUser) {
+        await checkProfileStatus();
+        await fetchFavorites(currentUser);
+      } else {
+        setIsAdmin(false);
+        setHasPendingCoupons(false);
+        setFavorites([]);
+        localStorage.removeItem('favorites');
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      checkPendingCoupons();
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user && location.pathname === '/' && location.state?.couponSubmitted) {
+      console.log('Coupon submitted, re-checking pending coupons');
+      checkPendingCoupons();
+    }
+  }, [location, user]);
+
+  const handleGoogleLogin = async () => {
+    setAuthError(null);
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      if (result.user) {
+        setUser(result.user);
+        const idToken = await result.user.getIdToken();
+        await axios.post(
+          `${import.meta.env.VITE_API_URL}/api/listings/users/insert`,
+          {
+            firebase_uid: result.user.uid,
+            email: result.user.email,
+          },
+          {
+            headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+          }
+        );
+        await checkProfileStatus();
+        await checkPendingCoupons();
+        await fetchFavorites(result.user);
+      }
+    } catch (err) {
+      setAuthError(err.message);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      setShowSignOutMenu(false);
+      setUser(null);
+      setIsAdmin(false);
+      setHasPendingCoupons(false);
+      setFavorites([]);
+      localStorage.removeItem('favorites');
+    } catch (err) {
+      setAuthError(err.message);
+    }
+  };
+
+  const handleMenuToggle = () => {
+    if (!showSignOutMenu && user) {
+      console.log('Opening menu, checking pending coupons');
+      checkPendingCoupons();
+    }
+    setShowSignOutMenu((prev) => {
+      console.log('Toggling showSignOutMenu to:', !prev);
+      return !prev;
+    });
+  };
+
   const fallbackImage = 'https://picsum.photos/300/300?random=1';
   const username = user?.displayName || user?.email?.split('@')[0] || 'User';
 
+  console.log('Menu condition:', { isAdmin, hasPendingCoupons, showSignOutMenu });
+
+  if (authLoading) {
+    return <div className="text-center p-4">Loading...</div>;
+  }
+
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* Header */}
       <header className="bg-white shadow-md">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
           <Link to="/" className="text-2xl font-bold text-indigo-600">
@@ -261,7 +340,7 @@ const HomePage = () => {
             {user ? (
               <div className="relative">
                 <button
-                  onClick={() => setShowSignOutMenu(!showSignOutMenu)}
+                  onClick={handleMenuToggle}
                   className="flex items-center space-x-2 text-gray-700 hover:text-indigo-600 transition-colors"
                   aria-expanded={showSignOutMenu}
                   aria-label="User menu"
@@ -287,7 +366,7 @@ const HomePage = () => {
                     >
                       My Favorites
                     </Link>
-                    {isAdmin && (
+                    {(isAdmin || hasPendingCoupons) && (
                       <Link
                         to="/admin/dashboard"
                         className="block px-4 py-2 text-gray-700 hover:bg-gray-100"
@@ -325,36 +404,42 @@ const HomePage = () => {
         </div>
       </header>
 
-      {/* Hero Section */}
       <section
         className="relative bg-cover bg-center h-[600px] flex items-center justify-center text-center"
         style={{
           backgroundImage: `url('https://images.unsplash.com/photo-1600585154340-be6161a56a0c?ixlib=rb-4.0.3&auto=format&fit=crop&w=1350&q=80')`,
         }}
       >
-        <div className="absolute inset-0 bg-black opacity-60"></div>
+        <div className="absolute inset-0 bg-gray-900 opacity-60"></div>
         <div className="relative z-10 text-white">
-          <h1 className="text-5xl md:text-6xl font-bold mb-4 tracking-tight">
+          <h1 className="text-5xl font-bold mb-4 tracking-tight">
             Discover Indian Events, Temples, and Vendors
           </h1>
-          <p className="text-xl md:text-2xl mb-8">
-            Find cultural experiences near you!
-          </p>
+          <p className="text-xl mb-6">Find cultural experiences and promotions near you!</p>
         </div>
       </section>
 
-      {/* Search Form */}
-      <section className="container mx-auto px-4 -mt-16 relative z-10">
+      <section className="container mx-auto px-4 -mt-20 relative z-10">
         <form
           onSubmit={handleSearch}
-          className="bg-white shadow-lg rounded-lg p-6 flex flex-col md:flex-row gap-4 items-center justify-center"
+          className="bg-white shadow-md rounded-lg p-6 flex flex-wrap gap-4 items-center justify-center"
         >
+          <div className="w-full md:w-1/4">
+            <input
+              type="text"
+              name="search"
+              value={searchParams.search}
+              onChange={handleInputChange}
+              placeholder="Search by location (e.g., MD or Maryland)"
+              className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
           <div className="w-full md:w-1/5">
             <select
               name="type"
               value={searchParams.type}
               onChange={handleInputChange}
-              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-600"
             >
               <option value="">All Types</option>
               <option value="event">Event</option>
@@ -368,25 +453,15 @@ const HomePage = () => {
               name="category"
               value={searchParams.category}
               onChange={handleInputChange}
-              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-600"
             >
               <option value="">All Categories</option>
               {categories.map((cat) => (
-                <option key={cat.category_id} value={cat.name}>
+                <option key={cat.category_id || Math.random()} value={cat.name}>
                   {cat.name}
                 </option>
               ))}
             </select>
-          </div>
-          <div className="w-full md:w-1/5">
-            <input
-              type="text"
-              name="location"
-              value={searchParams.location}
-              onChange={handleInputChange}
-              placeholder="City or State"
-              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-            />
           </div>
           <div className="w-full md:w-1/5">
             <input
@@ -395,82 +470,73 @@ const HomePage = () => {
               value={searchParams.date}
               onChange={handleInputChange}
               disabled={searchParams.type && searchParams.type !== 'event'}
-              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:opacity-50"
+              className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-600 disabled:opacity-50"
             />
           </div>
-          <button
-            type="submit"
-            className="w-full md:w-auto bg-indigo-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-indigo-700 transition-colors"
-          >
-            Search
-          </button>
-        </form>
-      </section>
-
-      {/* Errors */}
-      <section className="container mx-auto px-4 py-6">
-        {authError && <p className="text-red-500 mb-4 text-center">{authError}</p>}
-        {actionError && <p className="text-red-500 mb-4 text-center">{actionError}</p>}
-        {error && <p className="text-red-500 mb-4 text-center">{error}</p>}
-        {couponError && <p className="text-red-500 mb-4 text-center">{couponError}</p>}
-      </section>
-
-      {/* Coupons Section */}
-      <section className="container mx-auto px-4 py-12">
-        <h2 className="text-3xl font-bold mb-8 text-gray-800 text-center">Available Coupons</h2>
-        <form onSubmit={handleCouponSearch} className="mb-8 flex justify-center gap-4">
-          <input
-            type="text"
-            value={couponSearchLocation}
-            onChange={(e) => setCouponSearchLocation(e.target.value)}
-            placeholder="Search coupons by location (e.g., New York, NY)"
-            className="w-full md:w-1/3 p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-          />
-          <button
-            type="submit"
-            className="bg-indigo-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-indigo-700 transition-colors"
-          >
-            Search
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setCouponSearchLocation('');
-              fetchCoupons();
-            }}
-            className="bg-gray-300 text-gray-700 font-bold py-3 px-6 rounded-lg hover:bg-gray-400 transition-colors"
-          >
-            Clear
-          </button>
-        </form>
-        {coupons.length === 0 && !couponError && (
-          <p className="text-gray-500 text-center">No coupons available.</p>
-        )}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {coupons.map((coupon) => (
-            <div
-              key={coupon.coupon_id}
-              className="bg-white shadow-md rounded-lg p-6 hover:shadow-lg transition-shadow duration-300"
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              className="bg-indigo-600 text-white font-semibold py-3 px-6 rounded-md hover:bg-indigo-700 transition-colors"
             >
-              <h3 className="text-lg font-semibold text-gray-800 mb-2">{coupon.code}</h3>
-              <p className="text-gray-600 text-sm mb-2">{coupon.description}</p>
-              <p className="text-gray-500 text-sm">
-                Discount: {coupon.discount_percentage ? `${coupon.discount_percentage}% off` : coupon.discount_amount ? `$${coupon.discount_amount} off` : 'N/A'}
-              </p>
-              <p className="text-gray-500 text-sm">Location: {coupon.location}</p>
-              <p className="text-gray-500 text-sm">
-                Valid Until: {new Date(coupon.valid_until).toLocaleDateString()}
-              </p>
-            </div>
-          ))}
-        </div>
+              Search
+            </button>
+            <button
+              type="button"
+              onClick={handleClearSearch}
+              className="bg-gray-300 text-gray-700 font-semibold py-3 px-4 rounded-md hover:bg-gray-400 transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+        </form>
       </section>
 
-      {/* Listings Section */}
+      <section className="container mx-auto px-4 py-6">
+        {authError && <p className="text-red-500 text-center mb-4">{authError}</p>}
+        {actionError && <p className="text-red-500 text-center mb-4">{actionError}</p>}
+        {error && <p className="text-red-500 text-center mb-4">{error}</p>}
+        {couponError && <p className="text-red-500 text-center mb-4">{couponError}</p>}
+      </section>
+
       <section className="container mx-auto px-4 py-12">
-        <h2 className="text-3xl font-bold mb-8 text-gray-800 text-center">Featured Listings</h2>
-        {loading && page === 1 && <p className="text-gray-500 text-center">Loading...</p>}
-        {!loading && !error && listings.length === 0 && <p className="text-gray-500 text-center">No listings found</p>}
+        <h2 className="text-3xl font-bold mb-6 text-gray-800 text-center">Available Coupons</h2>
+        {coupons.length === 0 && !couponError ? (
+          <p className="text-gray-600 text-center">
+            {searchParams.search ? `No coupons found for "${searchParams.search}".` : 'No approved coupons available.'}
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {coupons.map((coupon) => (
+              <div
+                key={coupon.coupon_id}
+                className="bg-white shadow-md rounded-lg p-6 hover:shadow-lg transition-shadow duration-300"
+              >
+                <h3 className="text-lg font-semibold text-gray-800 mb-2">{coupon.code}</h3>
+                <p className="text-gray-600 text-sm mb-2">{coupon.description || 'No description'}</p>
+                <p className="text-gray-500 text-sm">
+                  Discount:{' '}
+                  {coupon.discount_type === 'percentage'
+                    ? `${coupon.discount_value}% off`
+                    : `$${coupon.discount_value} off`}
+                </p>
+                <p className="text-gray-500 text-sm">Location: {coupon.location || 'N/A'}</p>
+                <p className="text-gray-500 text-sm">
+                  Valid Until: {new Date(coupon.expiry_date).toLocaleDateString()}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="container mx-auto px-4 py-12">
+        <h2 className="text-3xl font-bold mb-6 text-gray-800 text-center">Featured Listings</h2>
+        {loading && page === 1 && <p className="text-gray-600 text-center">Loading...</p>}
+        {!loading && !error && listings.length === 0 && (
+          <p className="text-gray-600 text-center">
+            {searchParams.search ? `No listings found for "${searchParams.search}".` : 'No listings found.'}
+          </p>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
           {Array.isArray(listings) &&
             listings.map((listing) => (
@@ -575,7 +641,7 @@ const HomePage = () => {
           <div className="text-center mt-10">
             <button
               onClick={handleViewMore}
-              className="bg-indigo-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-indigo-700 transition-colors"
+              className="bg-indigo-600 text-white font-semibold py-3 px-6 rounded-md hover:bg-indigo-700 transition-colors"
               disabled={loading}
             >
               {loading ? 'Loading...' : 'View More Listings'}
@@ -584,7 +650,6 @@ const HomePage = () => {
         )}
       </section>
 
-      {/* Footer */}
       <footer className="bg-indigo-800 text-white py-8">
         <div className="container mx-auto px-4 text-center">
           <p>© {new Date().getFullYear()} YourApp. All rights reserved.</p>

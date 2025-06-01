@@ -3,6 +3,8 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const serviceAccount = require('./config/serviceAccountKey.json');
 const listingsRouter = require('./routes/listings');
+const couponRouter = require('./routes/coupons');
+const categoriesRouter = require('./routes/categories');
 const admin = require('firebase-admin');
 
 
@@ -16,10 +18,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+
+
 // Mount the listings router
 app.use('/api/listings', listingsRouter);
 console.log('Mounted listings router at /api/listings');
 
+
+app.use('/api/coupons',couponRouter);
 //app.use('/api/listings', require('./routes/listings'));
 
 
@@ -66,7 +72,7 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-app.use('/api/coupons', require('./routes/coupons'));
+
 app.use('/api/categories', require('./routes/categories')); // New
 
 const userRoutes = require('./routes/users');
